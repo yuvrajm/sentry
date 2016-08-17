@@ -5,7 +5,45 @@ import ApiMixin from '../../mixins/apiMixin';
 import IndicatorStore from '../../stores/indicatorStore';
 import OrganizationHomeContainer from '../../components/organizations/homeContainer';
 import OrganizationState from '../../mixins/organizationState';
-import {t,tct} from '../../locale';
+import {NumberField} from '../../components/forms';
+import {t} from '../../locale';
+
+class RateLimitField extends NumberField {
+  render() {
+    let className = 'control-group';
+    if (this.props.error) {
+      className += ' has-error';
+    }
+    return (
+      <div className={className}>
+        <div className="controls">
+          {this.props.label &&
+            <label htmlFor={this.getId()} className="control-label">{this.props.label}</label>
+          }
+          <div>
+            <span style={{maxWidth: 100, display: 'inline-block'}}>
+              {this.getField()}
+            </span>
+            <small style={{color: '#666', margin: '0 5px'}}> / minute</small>
+            {this.props.disabled && this.props.disabledReason &&
+              <span className="disabled-indicator tip"
+                    title={this.props.disabledReason}>
+                <span className="icon-question" />
+              </span>
+            }
+          </div>
+          {this.props.help &&
+            <p className="help-block">{this.props.help}</p>
+          }
+          {this.props.error &&
+            <p className="error">{this.props.error}</p>
+          }
+        </div>
+      </div>
+    );
+  }
+}
+
 
 const RangeInput = React.createClass({
   propTypes: {
@@ -67,7 +105,7 @@ const RangeInput = React.createClass({
           min={min}
           max={max}
           step={step}
-          defaultValue={value}
+          value={value}
           ref="input" />
     );
   },
@@ -132,17 +170,26 @@ const RateLimitEditor = React.createClass({
 
     return (
       <form onSubmit={this.onSubmit}>
-          <p>
-            {/* This may not translate well to all languages since maxRate may affect plural form of "events per minute" */}
-            {tct('Your organization is limited to [strong:[maxRate] events per minute]. When this rate is exceeded the system will begin discarding data until the next interval.',
-              {
-                strong: <strong/>,
-                maxRate: maxRate
-              }
-            )}
-          </p>
+        <p>Rate limits allow you to control how much data is stored for this organization. When a rate is exceeded the system will begin discarding data until the next interval.</p>
 
-        <p>{t('You may set a limit to the maximum amount a single project may send:')}</p>
+        <br />
+
+        <h5>Global Limit</h5>
+
+        <RateLimitField
+            help="The maximum number of events to accept across this entire organization."
+            placeholder="e.g. 500"
+            value={maxRate}
+            disabled={maxRate > 0}
+            disabledReason="Your organization has a fixed rate limit, so this option is not configurable."
+            onChange={this.onRateLimitChange}
+            inputClassName="col-md-3" />
+
+        <br />
+
+        <h5>Project Limits</h5>
+
+        <p>{t('You may also set a limit to the maximum amount a single project may send:')}</p>
 
         <RangeInput
             defaultValue={savedProjectLimit}
@@ -170,8 +217,6 @@ const OrganizationRateLimits = React.createClass({
       return null;
 
     let org = this.context.organization;
-    // TODO(dcramer): defined limit is only for testing atm
-    let maxRate = org.quota.maxRate;
 
     return (
       <OrganizationHomeContainer>
@@ -180,11 +225,7 @@ const OrganizationRateLimits = React.createClass({
             <h3>{t('Rate Limits')}</h3>
           </div>
           <div className="box-content with-padding">
-            {maxRate !== 0 ?
-              <RateLimitEditor organization={org} />
-            :
-              <p>{t('There are no rate limits configured for your organization.')}</p>
-            }
+            <RateLimitEditor organization={org} />
           </div>
         </div>
       </OrganizationHomeContainer>
