@@ -19,7 +19,7 @@ from sentry.models import (
 from sentry.tasks.base import instrumented_task
 from sentry.utils import json, redis
 from sentry.utils.dates import floor_to_utc_day, to_datetime, to_timestamp
-from sentry.utils.email import MessageBuilder
+from sentry.utils.email import MessageBuilder, send_messages
 from sentry.utils.math import mean
 from six.moves import reduce
 
@@ -469,7 +469,7 @@ def prepare_organization_report(timestamp, duration, organization_id):
     )
 
     for user_id in member_set.values_list('user_id', flat=True):
-        deliver_organization_user_report.delay(
+        deliver_reports_for_user.delay(
             timestamp,
             duration,
             organization_id,
@@ -517,7 +517,38 @@ durations = {
 }
 
 
-def build_message(timestamp, duration, organization, user, report):
+DISABLED_ORGANIZATIONS_USER_OPTION_KEY = 'reports:disabled-organizations'
+
+
+def user_subscribed_to_organization_reports(user, organization):
+    return organization.id not in UserOption.objects.get_value(
+        user=user,
+        project=None,
+        key=DISABLED_ORGANIZATIONS_USER_OPTION_KEY,
+        default=[],
+    )
+
+
+class Skipped(object):
+    NotSubscribed = object()
+    NoProjects = object()
+
+
+SKIP_VALUES = frozenset((
+    Skipped.NotSubscribed,
+    Skipped.NoProjects,
+))
+
+
+def build_organization_report_messages(timestamp, duration, organization, user, reports):
+    if not user_subscribed_to_organization_reports(user, organization):
+        logger.debug(
+            'Skipping report for %r to %r, user is not subscribed to organization reports.',
+            organization,
+            user,
+        )
+        return Skipped.NotSubscribed
+
     start, stop = interval = _to_interval(timestamp, duration)
 
     duration_spec = durations[duration]
@@ -543,53 +574,35 @@ def build_message(timestamp, duration, organization, user, report):
                 organization,
                 user,
             ),
-            'report': to_context(report),
+            'report': to_context(
+                reduce(
+                    merge_reports,
+                    reports.values(),
+                ),
+            ),
             'user': user,
         },
     )
 
     message.add_users((user.id,))
 
-    return message
+    return message.get_built_messages()
 
 
-DISABLED_ORGANIZATIONS_USER_OPTION_KEY = 'reports:disabled-organizations'
-
-
-def user_subscribed_to_organization_reports(user, organization):
-    return organization.id not in UserOption.objects.get_value(
-        user=user,
-        project=None,
-        key=DISABLED_ORGANIZATIONS_USER_OPTION_KEY,
-        default=[],
-    )
-
-
-class Skipped(object):
-    NotSubscribed = object()
-    NoProjects = object()
+def build_project_report_messages(timestamp, duration, organization, user, project, report):
+    return Skipped.NotSubscribed
 
 
 @instrumented_task(
-    name='sentry.tasks.reports.deliver_organization_user_report',
+    name='sentry.tasks.reports.deliver_reports_for_user',
     queue='reports.deliver')
-def deliver_organization_user_report(timestamp, duration, organization_id, user_id):
+def deliver_reports_for_user(timestamp, duration, organization_id, user_id):
     organization = _get_organization_queryset().get(id=organization_id)
     user = User.objects.get(id=user_id)
 
-    if not user_subscribed_to_organization_reports(user, organization):
-        logger.debug(
-            'Skipping report for %r to %r, user is not subscribed to reports.',
-            organization,
-            user,
-        )
-        return Skipped.NotSubscribed
-
     projects = set()
     for team in Team.objects.get_for_user(organization, user):
-        projects.update(
-            Project.objects.get_for_user(team, user, _skip_team_check=True),
-        )
+        projects.update(Project.objects.get_for_user(team, user, _skip_team_check=True))
 
     if not projects:
         logger.debug(
@@ -599,24 +612,55 @@ def deliver_organization_user_report(timestamp, duration, organization_id, user_
         )
         return Skipped.NoProjects
 
-    message = build_message(
-        timestamp,
-        duration,
-        organization,
-        user,
-        reduce(
-            merge_reports,
-            backend.fetch(  # TODO: This should handle missing data gracefully, maybe?
+    projects = list(projects)
+
+    reports = dict(
+        zip(
+            projects,
+            backend.fetch(timestamp, duration, organization, projects)
+        )
+    )
+
+    results = []
+
+    results.append(
+        build_organization_report_messages(
+            timestamp,
+            duration,
+            organization,
+            user,
+            reports,
+        )
+    )
+
+    for project, report in reports.items():
+        results.append(
+            build_project_report_messages(
                 timestamp,
                 duration,
                 organization,
-                projects,
-            ),
+                user,
+                project,
+                report,
+            )
+        )
+
+    # Filter out skipped values -- difference between the input sequence and
+    # output sequence should be logged (eventually.)
+    def is_not_skip_value(value):
+        try:
+            return value not in SKIP_VALUES
+        except TypeError:
+            return True
+
+    messages = list(
+        itertools.chain.from_iterable(
+            filter(is_not_skip_value, results)
         )
     )
 
     if features.has('organizations:reports:deliver', organization):
-        message.send()
+        send_messages(messages)
 
 
 IssueList = namedtuple('IssueList', 'count issues')
