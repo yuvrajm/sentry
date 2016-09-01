@@ -497,8 +497,8 @@ def report(request):
         }
 
     return MailPreview(
-        html_template='sentry/emails/reports/body.html',
-        text_template='sentry/emails/reports/body.txt',
+        html_template='sentry/emails/reports/organization/body.html',
+        text_template='sentry/emails/reports/organization/body.txt',
         context={
             'duration': reports.durations[duration],
             'interval': {
