@@ -13,10 +13,10 @@
         {% csrf_token %}
         {{ form|as_crispy_errors }}
 
-        {% if request.user.has_unverified_emails %}
+        {% if not email.is_verified %}
           <div class="alert alert-warning alert-block">
             {% trans "Your email address has not been verified. " %}
-            <a href="{% url 'sentry-account-confirm-email-send' %}">{% trans "Resend Verification Email" %}</a>.
+            <a href="{% url 'sentry-account-confirm-email-send' %}?email={{ email.email }}">{% trans "Resend Verification Email" %}</a>.
           </div>
         {% endif %}
 

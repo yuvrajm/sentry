@@ -123,7 +123,13 @@ def recover_confirm(request, user_id, hash):
 @login_required
 def start_confirm_email(request):
     has_unverified_emails = request.user.has_unverified_emails()
-    if has_unverified_emails:
+
+    if 'email' in request.GET:
+        email = request.GET.get('email')
+        email_obj = UserEmail.objects.get(email=email)
+        request.user.send_confirm_email_singular(email_obj)
+        msg = _('A verification email has been sent to %s.') % (email)
+    elif has_unverified_emails:
         request.user.send_confirm_emails()
         unverified_emails = [e.email for e in request.user.get_unverified_emails()]
         msg = _('A verification email has been sent to %s.') % (', ').join(unverified_emails)
@@ -191,7 +197,11 @@ def account_settings(request):
             else:
                 user_email.set_hash()
                 user_email.save()
-            user.send_confirm_emails()
+            user.send_confirm_email_singular(user_email)
+            messages.add_message(
+                request,
+                messages.SUCCESS,
+                'A confirmation email has been sent to %s.' % user_email.email)
 
         messages.add_message(
             request, messages.SUCCESS, 'Your settings were saved.')
@@ -203,6 +213,7 @@ def account_settings(request):
         'page': 'settings',
         'has_2fa': Authenticator.objects.user_has_2fa(request.user),
         'AUTH_PROVIDERS': auth.get_auth_providers(),
+        'email': UserEmail.get_primary_email(user),
     })
     return render_to_response('sentry/account/settings.html', context, request)
 
@@ -398,7 +409,11 @@ def show_emails(request):
             else:
                 user_email.set_hash()
                 user_email.save()
-            user.send_confirm_emails()
+            user.send_confirm_email_singular(user_email)
+            messages.add_message(
+                request,
+                messages.SUCCESS,
+                'A confirmation email has been sent to %s.' % user_email.email)
         alternative_email = email_form.cleaned_data['alt_email']
         # check if this alternative email already exists for user
         if alternative_email and not UserEmail.objects.filter(user=user, email=alternative_email):
@@ -415,7 +430,11 @@ def show_emails(request):
                 new_email.set_hash()
                 new_email.save()
             # send confirmation emails to any non verified emails
-            user.send_confirm_emails()
+            user.send_confirm_email_singular(new_email)
+            messages.add_message(
+                request,
+                messages.SUCCESS,
+                'A confirmation email has been sent to %s.' % new_email.email)
 
         messages.add_message(
             request, messages.SUCCESS, 'Your settings were saved.')
