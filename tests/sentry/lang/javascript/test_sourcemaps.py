@@ -2,8 +2,8 @@
 
 from __future__ import absolute_import
 
-from sentry.lang.javascript.sourcemaps import (
-    SourceMap, parse_vlq, parse_sourcemap, sourcemap_to_index, find_source, get_inline_content_sources
+from sentry.lang.javascript.sourcemaps.native import (
+    parse_vlq, parse_sourcemap, View as NativeView, SourceMap,
 )
 from sentry.testutils import TestCase
 
@@ -85,40 +85,40 @@ class ParseVlqTest(TestCase):
 
 class FindSourceTest(TestCase):
     def test_simple(self):
-        indexed_sourcemap = sourcemap_to_index(sourcemap)
+        smap_view = NativeView.from_json(sourcemap)
 
-        result = find_source(indexed_sourcemap, 1, 56)
+        result = smap_view.find_source(1, 56)
         assert result == SourceMap(dst_line=0, dst_col=50, src='foo/file2.js', src_line=0, src_col=9, name='multiply')
 
         # Start of minified file (exact match first line/col tuple)
-        result = find_source(indexed_sourcemap, 1, 0)
+        result = smap_view.find_source(1, 0)
         assert result == SourceMap(dst_line=0, dst_col=0, src='foo/file1.js', src_line=0, src_col=0, name=None)
 
         # Last character in mapping
-        result = find_source(indexed_sourcemap, 1, 36)
+        result = smap_view.find_source(1, 36)
         assert result == SourceMap(dst_line=0, dst_col=30, src='foo/file1.js', src_line=2, src_col=1, name=None)
 
         # First character in mapping (exact match line/col tuple)
-        result = find_source(indexed_sourcemap, 1, 37)
+        result = smap_view.find_source(1, 37)
         assert result == SourceMap(dst_line=0, dst_col=37, src='foo/file1.js', src_line=2, src_col=8, name='a')
 
         # End of minified file (character *beyond* last line/col tuple)
-        result = find_source(indexed_sourcemap, 1, 192)
+        result = smap_view.find_source(1, 192)
         assert result == SourceMap(dst_line=0, dst_col=191, src='foo/file2.js', src_line=9, src_col=25, name='e')
 
 
 class GetInlineContentSourcesTest(TestCase):
     def test_no_inline(self):
         # basic sourcemap fixture has no inlined sources, so expect an empty list
-        indexed_sourcemap = sourcemap_to_index(sourcemap)
+        smap_view = NativeView.from_json(sourcemap)
 
-        sources = get_inline_content_sources(indexed_sourcemap, 'https://example.com/static/')
+        sources = smap_view.get_inline_content_sources('https://example.com/static/')
         assert sources == []
 
     def test_indexed_inline(self):
-        indexed_sourcemap = sourcemap_to_index(indexed_sourcemap_example)
+        smap_view = NativeView.from_json(indexed_sourcemap_example)
 
-        sources = get_inline_content_sources(indexed_sourcemap, 'https://example.com/static/')
+        sources = smap_view.get_inline_content_sources('https://example.com/static/')
         assert sources == [
             ('https://example.com/the/root/one.js', [' ONE.foo = function (bar) {', '   return baz(bar);', ' };']),
             ('https://example.com/the/root/two.js', [' TWO.inc = function (n) {', '   return n + 1;', ' };'])
@@ -173,33 +173,33 @@ class ParseIndexedSourcemapTest(TestCase):
     # Tests lookups that fall exactly on source map token boundaries
     # https://github.com/mozilla/source-map/blob/master/test/test-source-map-consumer.js#138
     def test_exact_mappings(self):
-        indexed_sourcemap = sourcemap_to_index(indexed_sourcemap_example)
+        smap_view = NativeView.from_json(indexed_sourcemap_example)
 
         # one.js
-        assert find_source(indexed_sourcemap, 1, 1) == \
+        assert smap_view.find_source(1, 1) == \
             SourceMap(dst_line=0, dst_col=1, src='/the/root/one.js', src_line=0, src_col=1, name=None)
-        assert find_source(indexed_sourcemap, 1, 18) == \
+        assert smap_view.find_source(1, 18) == \
             SourceMap(dst_line=0, dst_col=18, src='/the/root/one.js', src_line=0, src_col=21, name='bar')
-        assert find_source(indexed_sourcemap, 1, 28) == \
+        assert smap_view.find_source(1, 28) == \
             SourceMap(dst_line=0, dst_col=28, src='/the/root/one.js', src_line=1, src_col=10, name='baz')
 
         # two.js
-        assert find_source(indexed_sourcemap, 2, 18) == \
+        assert smap_view.find_source(2, 18) == \
             SourceMap(dst_line=1, dst_col=18, src='/the/root/two.js', src_line=0, src_col=21, name='n')
-        assert find_source(indexed_sourcemap, 2, 21) == \
+        assert smap_view.find_source(2, 21) == \
             SourceMap(dst_line=1, dst_col=21, src='/the/root/two.js', src_line=1, src_col=3, name=None)
-        assert find_source(indexed_sourcemap, 2, 21) == \
+        assert smap_view.find_source(2, 21) == \
             SourceMap(dst_line=1, dst_col=21, src='/the/root/two.js', src_line=1, src_col=3, name=None)
 
     # Tests lookups that fall inside source map token boundaries
     # https://github.com/mozilla/source-map/blob/master/test/test-source-map-consumer.js#181
     def test_fuzzy_mapping(self):
-        indexed_sourcemap = sourcemap_to_index(indexed_sourcemap_example)
+        smap_view = NativeView.from_json(indexed_sourcemap_example)
 
         # one.js
-        assert find_source(indexed_sourcemap, 1, 20) == \
+        assert smap_view.find_source(1, 20) == \
             SourceMap(dst_line=0, dst_col=18, src='/the/root/one.js', src_line=0, src_col=21, name='bar')
-        assert find_source(indexed_sourcemap, 1, 30) == \
+        assert smap_view.find_source(1, 30) == \
             SourceMap(dst_line=0, dst_col=28, src='/the/root/one.js', src_line=1, src_col=10, name='baz')
-        assert find_source(indexed_sourcemap, 2, 12) == \
+        assert smap_view.find_source(2, 12) == \
             SourceMap(dst_line=1, dst_col=9, src='/the/root/two.js', src_line=0, src_col=11, name=None)

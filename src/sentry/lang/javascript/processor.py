@@ -37,7 +37,7 @@ from sentry.utils.strings import truncatechars
 from sentry.utils import metrics
 
 from .cache import SourceCache, SourceMapCache
-from .sourcemaps import sourcemap_to_index, find_source, get_inline_content_sources
+from .sourcemaps import View as SourceMapView
 
 
 # number of surrounding lines (on each side) to fetch
@@ -494,6 +494,8 @@ def fetch_sourcemap(url, project=None, release=None, allow_scraping=True):
     if is_data_uri(url):
         body = base64.b64decode(url[BASE64_PREAMBLE_LENGTH:])
     else:
+        # TODO(mattrobenolt): this is returning unicodes, and there's no
+        # reason we need to do this. We operate on this payload as bytes.
         result = fetch_file(url, project=project, release=release,
                             allow_scraping=allow_scraping)
         body = result.body
@@ -505,8 +507,7 @@ def fetch_sourcemap(url, project=None, release=None, allow_scraping=True):
         # [2] http://www.html5rocks.com/en/tutorials/developertools/sourcemaps/#toc-xssi
         if body.startswith((u")]}'\n", u")]}\n")):
             body = body.split(u'\n', 1)[1]
-
-        return sourcemap_to_index(body)
+        return SourceMapView.from_json(body)
     except Exception as exc:
         # This is in debug because the product shows an error already.
         logger.debug(six.text_type(exc), exc_info=True)
@@ -722,13 +723,13 @@ class SourceProcessor(object):
                 logger.debug('No source found for %s', frame.abs_path)
                 continue
 
-            sourcemap_url, sourcemap_idx = sourcemaps.get_link(frame.abs_path)
-            if sourcemap_idx and frame.colno is None:
+            sourcemap_url, sourcemap_view = sourcemaps.get_link(frame.abs_path)
+            if sourcemap_view and frame.colno is None:
                 all_errors.append({
                     'type': EventError.JS_NO_COLUMN,
                     'url': expose_url(frame.abs_path),
                 })
-            elif sourcemap_idx:
+            elif sourcemap_view:
                 last_state = state
 
                 if is_data_uri(sourcemap_url):
@@ -739,7 +740,7 @@ class SourceProcessor(object):
                 sourcemap_label = expose_url(sourcemap_label)
 
                 try:
-                    state = find_source(sourcemap_idx, frame.lineno, frame.colno)
+                    state = sourcemap_view.find_source(frame.lineno, frame.colno)
                 except Exception:
                     state = None
                     all_errors.append({
@@ -879,7 +880,7 @@ class SourceProcessor(object):
 
         # pull down sourcemap
         try:
-            sourcemap_idx = fetch_sourcemap(
+            sourcemap_view = fetch_sourcemap(
                 sourcemap_url,
                 project=self.project,
                 release=release,
@@ -889,10 +890,10 @@ class SourceProcessor(object):
             cache.add_error(filename, exc.data)
             return
 
-        sourcemaps.add(sourcemap_url, sourcemap_idx)
+        sourcemaps.add(sourcemap_url, sourcemap_view)
 
         # cache any inlined sources
-        inline_sources = get_inline_content_sources(sourcemap_idx, sourcemap_url)
+        inline_sources = sourcemap_view.get_inline_content_sources(sourcemap_url)
         for source in inline_sources:
             self.cache.add(*source)
 
