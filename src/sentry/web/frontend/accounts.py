@@ -126,7 +126,7 @@ def start_confirm_email(request):
 
     if 'email' in request.GET:
         email = request.GET.get('email')
-        email_obj = UserEmail.objects.get(email=email)
+        email_obj = UserEmail.objects.get(email=email, user=request.user)
         request.user.send_confirm_email_singular(email_obj)
         msg = _('A verification email has been sent to %s.') % (email)
     elif has_unverified_emails:
